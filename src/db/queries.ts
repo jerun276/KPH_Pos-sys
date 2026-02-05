@@ -48,6 +48,21 @@ export type VariantUpsertInput = {
   notes: string | null;
 };
 
+export type ProductSaleRow = {
+  id: string;
+  name: string;
+};
+
+export type VariantSaleRow = {
+  id: string;
+  product_id: string;
+  size_label: string;
+  cost_price: number;
+  min_selling_price: number | null;
+  max_selling_price: number | null;
+  current_stock: number;
+};
+
 export async function getTableCounts(db: SQLite.SQLiteDatabase): Promise<{
   dealers: number;
   products: number;
@@ -204,6 +219,100 @@ export async function upsertVariant(db: SQLite.SQLiteDatabase, input: VariantUps
 
 export async function deleteVariant(db: SQLite.SQLiteDatabase, variantId: string): Promise<void> {
   await db.runAsync('DELETE FROM Variants WHERE id = ?;', [variantId]);
+}
+
+export async function listProductsForSale(
+  db: SQLite.SQLiteDatabase,
+  input: {
+    search?: string;
+  },
+): Promise<ProductSaleRow[]> {
+  const search = input.search?.trim() ?? '';
+  const hasSearch = search.length > 0;
+  const pattern = `%${search}%`;
+
+  const sql = `
+    SELECT id, name
+    FROM Products
+    ${hasSearch ? 'WHERE name LIKE ?' : ''}
+    ORDER BY name COLLATE NOCASE ASC;
+  `;
+
+  const rows = await db.getAllAsync<ProductSaleRow>(sql, hasSearch ? [pattern] : []);
+  return rows ?? [];
+}
+
+export async function listVariantsForSale(db: SQLite.SQLiteDatabase, productId: string): Promise<VariantSaleRow[]> {
+  const rows = await db.getAllAsync<VariantSaleRow>(
+    `SELECT id, product_id, size_label, cost_price, min_selling_price, max_selling_price, current_stock
+     FROM Variants
+     WHERE product_id = ?
+     ORDER BY size_label COLLATE NOCASE ASC;`,
+    [productId],
+  );
+  return rows ?? [];
+}
+
+export async function createSaleAndUpdateStock(
+  db: SQLite.SQLiteDatabase,
+  input: {
+    variantId: string;
+    finalSoldPrice: number;
+    quantity: number;
+    saleDate: number;
+    isReturn: boolean;
+    notes?: string | null;
+  },
+): Promise<string> {
+  if (!Number.isFinite(input.finalSoldPrice) || input.finalSoldPrice <= 0) {
+    throw new Error('Invalid sold price');
+  }
+  if (!Number.isInteger(input.quantity) || input.quantity <= 0) {
+    throw new Error('Invalid quantity');
+  }
+
+  const id = createId();
+  const now = Date.now();
+  const delta = input.isReturn ? input.quantity : -input.quantity;
+
+  await db.execAsync('BEGIN;');
+  try {
+    const v = await db.getFirstAsync<{ current_stock: number }>('SELECT current_stock FROM Variants WHERE id = ?;', [
+      input.variantId,
+    ]);
+    if (!v) {
+      throw new Error('Variant not found');
+    }
+
+    const nextStock = Number(v.current_stock) + delta;
+    if (nextStock < 0) {
+      throw new Error('Not enough stock');
+    }
+
+    await db.runAsync('UPDATE Variants SET current_stock = ? WHERE id = ?;', [nextStock, input.variantId]);
+
+    await db.runAsync(
+      `INSERT INTO Sales
+       (id, variant_id, final_sold_price, quantity_sold, sale_date, is_return, notes, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
+      [
+        id,
+        input.variantId,
+        input.finalSoldPrice,
+        input.quantity,
+        input.saleDate,
+        input.isReturn ? 1 : 0,
+        input.notes ?? null,
+        now,
+      ],
+    );
+
+    await db.execAsync('COMMIT;');
+    return id;
+  } catch (e) {
+    await db.execAsync('ROLLBACK;');
+    throw e;
+  }
 }
 
 export async function createExpense(db: SQLite.SQLiteDatabase, input: {

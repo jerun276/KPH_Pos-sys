@@ -1,7 +1,7 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as ImagePicker from 'expo-image-picker';
 import * as React from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { getDb } from '../db/database';
 import { listDealers, upsertProduct, type DealerRow, type ProductUpsertInput } from '../db/queries';
@@ -9,12 +9,31 @@ import type { RootStackParamList } from '../navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ProductUpsert'>;
 
+function formatDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function tryGetDateTimePicker(): null | {
+  DateTimePicker: React.ComponentType<any>;
+} {
+  try {
+    const mod = require('@react-native-community/datetimepicker');
+    const DateTimePicker = mod?.default ?? mod?.DateTimePicker;
+    if (!DateTimePicker) return null;
+    return { DateTimePicker };
+  } catch {
+    return null;
+  }
+}
+
 export function ProductUpsertScreen({ navigation, route }: Props) {
   const productId = route.params?.productId ?? null;
 
   const [name, setName] = React.useState('');
   const [imageUri, setImageUri] = React.useState<string | null>(null);
   const [purchaseDateText, setPurchaseDateText] = React.useState<string>('');
+  const [purchaseDate, setPurchaseDate] = React.useState<Date | null>(null);
+  const [showDatePicker, setShowDatePicker] = React.useState(false);
   const [notes, setNotes] = React.useState<string>('');
   const [category, setCategory] = React.useState<string>('');
   const [material, setMaterial] = React.useState<string>('');
@@ -55,7 +74,9 @@ export function ProductUpsertScreen({ navigation, route }: Props) {
 
         setName(p.name ?? '');
         setImageUri(p.image_uri ?? null);
-        setPurchaseDateText(p.purchase_date ? new Date(p.purchase_date).toISOString().slice(0, 10) : '');
+        const dt = p.purchase_date ? new Date(p.purchase_date) : null;
+        setPurchaseDate(dt);
+        setPurchaseDateText(dt ? formatDate(dt) : '');
         setCategory(p.category ?? '');
         setMaterial(p.material ?? '');
         setNotes(p.notes ?? '');
@@ -86,6 +107,8 @@ export function ProductUpsertScreen({ navigation, route }: Props) {
   }, []);
 
   const parsePurchaseDate = React.useCallback((): number | null => {
+    if (purchaseDate) return purchaseDate.getTime();
+
     const t = purchaseDateText.trim();
     if (!t) return null;
 
@@ -93,7 +116,7 @@ export function ProductUpsertScreen({ navigation, route }: Props) {
     if (Number.isNaN(parsed)) return null;
 
     return parsed;
-  }, [purchaseDateText]);
+  }, [purchaseDate, purchaseDateText]);
 
   const onSave = React.useCallback(async () => {
     if (!name.trim()) {
@@ -128,6 +151,11 @@ export function ProductUpsertScreen({ navigation, route }: Props) {
     if (!dealerId) return 'None';
     return dealers.find((d) => d.id === dealerId)?.name ?? 'Unknown';
   }, [dealerId, dealers]);
+
+  const datePickerMod = React.useMemo(() => tryGetDateTimePicker(), []);
+  const DateTimePicker = datePickerMod?.DateTimePicker;
+  const datePickerAvailable = !!DateTimePicker;
+  const effectiveDate = purchaseDate ?? (purchaseDateText.trim() ? new Date(Date.parse(purchaseDateText.trim())) : new Date());
 
   return (
     <View style={styles.container}>
@@ -177,8 +205,51 @@ export function ProductUpsertScreen({ navigation, route }: Props) {
         </View>
       ) : null}
 
-      <Text style={styles.label}>Purchase Date (YYYY-MM-DD)</Text>
-      <TextInput value={purchaseDateText} onChangeText={setPurchaseDateText} placeholder="2026-02-05" style={styles.input} />
+      <Text style={styles.label}>Purchase Date</Text>
+      {datePickerAvailable ? (
+        <>
+          <Pressable
+            onPress={() => setShowDatePicker(true)}
+            style={styles.select}
+          >
+            <Text style={styles.selectText}>{purchaseDate ? formatDate(purchaseDate) : 'Select date'}</Text>
+          </Pressable>
+          {showDatePicker ? (
+            <DateTimePicker
+              value={effectiveDate}
+              mode="date"
+              display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+              onChange={(event: any, selected?: Date) => {
+                if (Platform.OS !== 'ios') setShowDatePicker(false);
+                if (event?.type === 'dismissed') return;
+                if (!selected) return;
+                setPurchaseDate(selected);
+                setPurchaseDateText(formatDate(selected));
+              }}
+            />
+          ) : null}
+          {Platform.OS === 'ios' && showDatePicker ? (
+            <Pressable
+              onPress={() => setShowDatePicker(false)}
+              style={[styles.button, { alignSelf: 'flex-start', marginTop: 10 }]}
+            >
+              <Text style={styles.buttonText}>Done</Text>
+            </Pressable>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <TextInput
+            value={purchaseDateText}
+            onChangeText={(t) => {
+              setPurchaseDate(null);
+              setPurchaseDateText(t);
+            }}
+            placeholder="YYYY-MM-DD (example: 2026-02-05)"
+            style={styles.input}
+          />
+        </>
+      )}
 
       <Text style={styles.label}>Category</Text>
       <TextInput value={category} onChangeText={setCategory} placeholder="optional" style={styles.input} />
