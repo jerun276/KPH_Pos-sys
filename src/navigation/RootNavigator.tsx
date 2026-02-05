@@ -3,9 +3,11 @@ import * as React from 'react';
 
 import { ActionModalScreen } from '../screens/ActionModalScreen';
 import { AddExpenseScreen } from '../screens/AddExpenseScreen';
+import { ExpenseEditScreen } from '../screens/ExpenseEditScreen';
 import { ExpensesHistoryScreen } from '../screens/ExpensesHistoryScreen';
 import { ProductUpsertScreen } from '../screens/ProductUpsertScreen';
 import { RecordSaleScreen } from '../screens/RecordSaleScreen';
+import { SaleEditScreen } from '../screens/SaleEditScreen';
 import { SalesHistoryScreen } from '../screens/SalesHistoryScreen';
 import { VariantsEditorScreen } from '../screens/VariantsEditorScreen';
 import { TabsNavigator } from './TabsNavigator';
@@ -31,6 +33,8 @@ export function RootNavigator() {
       <Stack.Screen name="VariantsEditor" component={VariantsEditorScreen} options={{ title: 'Variants' }} />
       <Stack.Screen name="SalesHistory" component={SalesHistoryScreen} options={{ title: 'Sales History' }} />
       <Stack.Screen name="ExpensesHistory" component={ExpensesHistoryScreen} options={{ title: 'Expenses History' }} />
+      <Stack.Screen name="ExpenseEdit" component={ExpenseEditScreen} options={{ title: 'Edit Expense' }} />
+      <Stack.Screen name="SaleEdit" component={SaleEditScreen} options={{ title: 'Edit Sale' }} />
     </Stack.Navigator>
   );
 }

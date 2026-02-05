@@ -4,6 +4,8 @@ import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native
 
 import { getDb } from '../db/database';
 import { deleteExpense, listExpensesHistory, type ExpenseHistoryRow } from '../db/queries';
+import { NavigationProp, useNavigation } from '@react-navigation/native';
+import type { RootStackParamList } from '../navigation/types';
 
 function formatDate(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
@@ -15,13 +17,33 @@ function currency(n: number): string {
 }
 
 export function ExpensesHistoryScreen() {
+  const navigation = useNavigation<NavigationProp<RootStackParamList>>();
   const [rows, setRows] = React.useState<ExpenseHistoryRow[]>([]);
+
+  const [filter, setFilter] = React.useState<'today' | '7d' | 'month' | 'all'>('all');
+
+  const range = React.useMemo(() => {
+    const now = new Date();
+    if (filter === 'all') return undefined;
+    if (filter === 'today') {
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      return { startMs: start, endMs: start + 24 * 60 * 60 * 1000 };
+    }
+    if (filter === '7d') {
+      const end = now.getTime();
+      const start = end - 7 * 24 * 60 * 60 * 1000;
+      return { startMs: start, endMs: end };
+    }
+    const start = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime();
+    return { startMs: start, endMs: end };
+  }, [filter]);
 
   const refresh = React.useCallback(async () => {
     const db = await getDb();
-    const r = await listExpensesHistory(db, { limit: 200 });
+    const r = await listExpensesHistory(db, { limit: 200, range });
     setRows(r);
-  }, []);
+  }, [range]);
 
   React.useEffect(() => {
     void refresh();
@@ -44,6 +66,21 @@ export function ExpensesHistoryScreen() {
 
   return (
     <View style={styles.container}>
+      <View style={styles.filtersRow}>
+        <Pressable onPress={() => setFilter('today')} style={[styles.pill, filter === 'today' && styles.pillActive]}>
+          <Text style={[styles.pillText, filter === 'today' && styles.pillTextActive]}>Today</Text>
+        </Pressable>
+        <Pressable onPress={() => setFilter('7d')} style={[styles.pill, filter === '7d' && styles.pillActive]}>
+          <Text style={[styles.pillText, filter === '7d' && styles.pillTextActive]}>7 Days</Text>
+        </Pressable>
+        <Pressable onPress={() => setFilter('month')} style={[styles.pill, filter === 'month' && styles.pillActive]}>
+          <Text style={[styles.pillText, filter === 'month' && styles.pillTextActive]}>This Month</Text>
+        </Pressable>
+        <Pressable onPress={() => setFilter('all')} style={[styles.pill, filter === 'all' && styles.pillActive]}>
+          <Text style={[styles.pillText, filter === 'all' && styles.pillTextActive]}>All</Text>
+        </Pressable>
+      </View>
+
       <FlatList
         data={rows}
         keyExtractor={(x) => x.id}
@@ -56,6 +93,9 @@ export function ExpensesHistoryScreen() {
               </Text>
               <View style={styles.rightHeader}>
                 <Text style={styles.date}>{formatDate(item.expense_date)}</Text>
+                <Pressable onPress={() => navigation.navigate('ExpenseEdit', { expenseId: item.id })}>
+                  <Text style={styles.editText}>Edit</Text>
+                </Pressable>
                 <Pressable
                   onPress={() => {
                     Alert.alert('Delete expense?', 'This cannot be undone.', [
@@ -104,6 +144,32 @@ const styles = StyleSheet.create({
     backgroundColor: 'white',
     padding: 16,
   },
+  filtersRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 10,
+    flexWrap: 'wrap',
+  },
+  pill: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#F9FAFB',
+  },
+  pillActive: {
+    backgroundColor: '#111827',
+    borderColor: '#111827',
+  },
+  pillText: {
+    fontWeight: '900',
+    color: '#111827',
+    fontSize: 12,
+  },
+  pillTextActive: {
+    color: 'white',
+  },
   card: {
     borderWidth: 1,
     borderColor: '#E5E7EB',
@@ -134,6 +200,11 @@ const styles = StyleSheet.create({
   },
   deleteText: {
     color: '#B91C1C',
+    fontWeight: '900',
+    fontSize: 12,
+  },
+  editText: {
+    color: '#2563EB',
     fontWeight: '900',
     fontSize: 12,
   },

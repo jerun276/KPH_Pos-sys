@@ -315,6 +315,186 @@ export async function createSaleAndUpdateStock(
   }
 }
 
+export async function getExpenseById(
+  db: SQLite.SQLiteDatabase,
+  expenseId: string,
+): Promise<ExpenseHistoryRow | null> {
+  const row =
+    (await db.getFirstAsync<ExpenseHistoryRow>(
+      'SELECT id, expense_date, category, amount, note FROM Expenses WHERE id = ?;',
+      [expenseId],
+    )) ?? null;
+  if (!row) return null;
+  return {
+    ...row,
+    expense_date: Number(row.expense_date ?? 0),
+    amount: Number(row.amount ?? 0),
+  };
+}
+
+export async function updateExpense(
+  db: SQLite.SQLiteDatabase,
+  input: {
+    id: string;
+    category: string;
+    amount: number;
+    expenseDate: number;
+    note: string | null;
+  },
+): Promise<void> {
+  if (!Number.isFinite(input.amount) || input.amount <= 0) {
+    throw new Error('Invalid amount');
+  }
+  if (!input.category.trim()) {
+    throw new Error('Invalid category');
+  }
+
+  await db.runAsync(
+    'UPDATE Expenses SET category = ?, amount = ?, expense_date = ?, note = ? WHERE id = ?;',
+    [input.category.trim(), input.amount, input.expenseDate, input.note, input.id],
+  );
+}
+
+export type SaleEditRow = {
+  id: string;
+  variant_id: string;
+  final_sold_price: number;
+  quantity_sold: number;
+  sale_date: number;
+  is_return: number;
+  notes: string | null;
+  product_id: string;
+  product_name: string;
+  size_label: string;
+  current_stock: number;
+  min_selling_price: number | null;
+  max_selling_price: number | null;
+};
+
+export async function getSaleByIdForEdit(db: SQLite.SQLiteDatabase, saleId: string): Promise<SaleEditRow | null> {
+  const row =
+    (await db.getFirstAsync<SaleEditRow>(
+      `
+      SELECT
+        s.id AS id,
+        s.variant_id AS variant_id,
+        s.final_sold_price AS final_sold_price,
+        s.quantity_sold AS quantity_sold,
+        s.sale_date AS sale_date,
+        s.is_return AS is_return,
+        s.notes AS notes,
+        p.id AS product_id,
+        p.name AS product_name,
+        v.size_label AS size_label,
+        v.current_stock AS current_stock,
+        v.min_selling_price AS min_selling_price,
+        v.max_selling_price AS max_selling_price
+      FROM Sales s
+      INNER JOIN Variants v ON v.id = s.variant_id
+      INNER JOIN Products p ON p.id = v.product_id
+      WHERE s.id = ?;
+      `,
+      [saleId],
+    )) ?? null;
+
+  if (!row) return null;
+  return {
+    ...row,
+    final_sold_price: Number(row.final_sold_price ?? 0),
+    quantity_sold: Number(row.quantity_sold ?? 0),
+    sale_date: Number(row.sale_date ?? 0),
+    is_return: Number(row.is_return ?? 0),
+    current_stock: Number(row.current_stock ?? 0),
+    min_selling_price: row.min_selling_price == null ? null : Number(row.min_selling_price),
+    max_selling_price: row.max_selling_price == null ? null : Number(row.max_selling_price),
+  };
+}
+
+export async function updateSaleAndAdjustStock(
+  db: SQLite.SQLiteDatabase,
+  input: {
+    saleId: string;
+    nextVariantId: string;
+    nextFinalSoldPrice: number;
+    nextQuantity: number;
+    nextSaleDate: number;
+    nextIsReturn: boolean;
+    nextNotes: string | null;
+  },
+): Promise<void> {
+  if (!Number.isFinite(input.nextFinalSoldPrice) || input.nextFinalSoldPrice <= 0) {
+    throw new Error('Invalid sold price');
+  }
+  if (!Number.isInteger(input.nextQuantity) || input.nextQuantity <= 0) {
+    throw new Error('Invalid quantity');
+  }
+
+  await db.execAsync('BEGIN;');
+  try {
+    const prev = await db.getFirstAsync<{
+      variant_id: string;
+      quantity_sold: number;
+      is_return: number;
+    }>('SELECT variant_id, quantity_sold, is_return FROM Sales WHERE id = ?;', [input.saleId]);
+
+    if (!prev) throw new Error('Sale not found');
+
+    const prevQty = Number(prev.quantity_sold ?? 0);
+    const prevIsReturn = Number(prev.is_return ?? 0) === 1;
+    const prevDelta = prevIsReturn ? prevQty : -prevQty;
+
+    const nextDelta = input.nextIsReturn ? input.nextQuantity : -input.nextQuantity;
+
+    if (prev.variant_id === input.nextVariantId) {
+      const stockRow = await db.getFirstAsync<{ current_stock: number }>(
+        'SELECT current_stock FROM Variants WHERE id = ?;',
+        [prev.variant_id],
+      );
+      if (!stockRow) throw new Error('Variant not found');
+      const stockChange = nextDelta - prevDelta;
+      const nextStock = Number(stockRow.current_stock ?? 0) + stockChange;
+      if (nextStock < 0) throw new Error('Not enough stock');
+      await db.runAsync('UPDATE Variants SET current_stock = ? WHERE id = ?;', [nextStock, prev.variant_id]);
+    } else {
+      const oldRow = await db.getFirstAsync<{ current_stock: number }>('SELECT current_stock FROM Variants WHERE id = ?;', [
+        prev.variant_id,
+      ]);
+      const newRow = await db.getFirstAsync<{ current_stock: number }>('SELECT current_stock FROM Variants WHERE id = ?;', [
+        input.nextVariantId,
+      ]);
+      if (!oldRow) throw new Error('Old variant not found');
+      if (!newRow) throw new Error('New variant not found');
+
+      const oldNextStock = Number(oldRow.current_stock ?? 0) + (-prevDelta);
+      const newNextStock = Number(newRow.current_stock ?? 0) + nextDelta;
+      if (oldNextStock < 0 || newNextStock < 0) throw new Error('Not enough stock');
+
+      await db.runAsync('UPDATE Variants SET current_stock = ? WHERE id = ?;', [oldNextStock, prev.variant_id]);
+      await db.runAsync('UPDATE Variants SET current_stock = ? WHERE id = ?;', [newNextStock, input.nextVariantId]);
+    }
+
+    await db.runAsync(
+      `UPDATE Sales
+       SET variant_id = ?, final_sold_price = ?, quantity_sold = ?, sale_date = ?, is_return = ?, notes = ?
+       WHERE id = ?;`,
+      [
+        input.nextVariantId,
+        input.nextFinalSoldPrice,
+        input.nextQuantity,
+        input.nextSaleDate,
+        input.nextIsReturn ? 1 : 0,
+        input.nextNotes,
+        input.saleId,
+      ],
+    );
+
+    await db.execAsync('COMMIT;');
+  } catch (e) {
+    await db.execAsync('ROLLBACK;');
+    throw e;
+  }
+}
+
 export type DateRange = {
   startMs?: number;
   endMs?: number;
@@ -466,6 +646,7 @@ export type SaleHistoryRow = {
   is_return: number;
   final_sold_price: number;
   quantity_sold: number;
+  cost_price: number;
   product_name: string;
   size_label: string;
 };
@@ -487,6 +668,7 @@ export async function listSalesHistory(
       s.is_return AS is_return,
       s.final_sold_price AS final_sold_price,
       s.quantity_sold AS quantity_sold,
+      v.cost_price AS cost_price,
       p.name AS product_name,
       v.size_label AS size_label
     FROM Sales s
@@ -504,6 +686,7 @@ export async function listSalesHistory(
     is_return: Number(r.is_return ?? 0),
     final_sold_price: Number(r.final_sold_price ?? 0),
     quantity_sold: Number(r.quantity_sold ?? 0),
+    cost_price: Number(r.cost_price ?? 0),
   }));
 }
 
@@ -514,6 +697,92 @@ export type ExpenseHistoryRow = {
   amount: number;
   note: string | null;
 };
+
+export type DailyAnalyticsRow = {
+  day: string;
+  day_ms: number;
+  revenue: number;
+  profit: number;
+  expenses: number;
+};
+
+export async function getDailyAnalytics(
+  db: SQLite.SQLiteDatabase,
+  range: DateRange,
+): Promise<DailyAnalyticsRow[]> {
+  const startMs = range.startMs ?? 0;
+  const endMs = range.endMs ?? Date.now();
+
+  const salesRows = await db.getAllAsync<{
+    day: string;
+    revenue: number;
+    cogs: number;
+  }>(
+    `
+    SELECT
+      strftime('%Y-%m-%d', s.sale_date / 1000, 'unixepoch', 'localtime') AS day,
+      SUM((CASE WHEN s.is_return = 1 THEN -1 ELSE 1 END) * s.final_sold_price * s.quantity_sold) AS revenue,
+      SUM((CASE WHEN s.is_return = 1 THEN -1 ELSE 1 END) * v.cost_price * s.quantity_sold) AS cogs
+    FROM Sales s
+    INNER JOIN Variants v ON v.id = s.variant_id
+    WHERE s.sale_date >= ? AND s.sale_date < ?
+    GROUP BY day
+    ORDER BY day ASC;
+    `,
+    [startMs, endMs],
+  );
+
+  const expenseRows = await db.getAllAsync<{
+    day: string;
+    expenses: number;
+  }>(
+    `
+    SELECT
+      strftime('%Y-%m-%d', e.expense_date / 1000, 'unixepoch', 'localtime') AS day,
+      SUM(e.amount) AS expenses
+    FROM Expenses e
+    WHERE e.expense_date >= ? AND e.expense_date < ?
+    GROUP BY day
+    ORDER BY day ASC;
+    `,
+    [startMs, endMs],
+  );
+
+  const salesMap = new Map<string, { revenue: number; profit: number }>();
+  for (const r of salesRows ?? []) {
+    const revenue = Number(r.revenue ?? 0);
+    const cogs = Number(r.cogs ?? 0);
+    salesMap.set(r.day, { revenue, profit: revenue - cogs });
+  }
+
+  const expenseMap = new Map<string, number>();
+  for (const r of expenseRows ?? []) {
+    expenseMap.set(r.day, Number(r.expenses ?? 0));
+  }
+
+  const out: DailyAnalyticsRow[] = [];
+  const start = new Date(startMs);
+  const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate()).getTime();
+  const end = new Date(endMs);
+  const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate()).getTime();
+
+  const oneDay = 24 * 60 * 60 * 1000;
+  for (let t = startDay; t <= endDay; t += oneDay) {
+    const d = new Date(t);
+    const day = d.toISOString().slice(0, 10);
+    const s = salesMap.get(day);
+    const expenses = expenseMap.get(day) ?? 0;
+    out.push({
+      day,
+      day_ms: t,
+      revenue: s?.revenue ?? 0,
+      profit: s?.profit ?? 0,
+      expenses,
+    });
+  }
+
+  return out;
+}
 
 export async function listExpensesHistory(
   db: SQLite.SQLiteDatabase,

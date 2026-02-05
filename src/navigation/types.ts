@@ -7,4 +7,6 @@ export type RootStackParamList = {
   VariantsEditor: { productId: string };
   SalesHistory: undefined;
   ExpensesHistory: undefined;
+  ExpenseEdit: { expenseId: string };
+  SaleEdit: { saleId: string };
 };
