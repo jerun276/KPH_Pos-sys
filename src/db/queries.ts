@@ -315,6 +315,151 @@ export async function createSaleAndUpdateStock(
   }
 }
 
+export type DateRange = {
+  startMs?: number;
+  endMs?: number;
+};
+
+export type DashboardTotals = {
+  revenue: number;
+  cogs: number;
+  expenses: number;
+  netProfit: number;
+  itemsSold: number;
+};
+
+function buildDateWhere(column: string, range?: DateRange): { clause: string; args: any[] } {
+  if (!range?.startMs && !range?.endMs) return { clause: '', args: [] };
+
+  const parts: string[] = [];
+  const args: any[] = [];
+  if (range.startMs != null) {
+    parts.push(`${column} >= ?`);
+    args.push(range.startMs);
+  }
+  if (range.endMs != null) {
+    parts.push(`${column} < ?`);
+    args.push(range.endMs);
+  }
+
+  return { clause: parts.length ? `WHERE ${parts.join(' AND ')}` : '', args };
+}
+
+export async function getDashboardTotals(db: SQLite.SQLiteDatabase, range?: DateRange): Promise<DashboardTotals> {
+  const salesWhere = buildDateWhere('s.sale_date', range);
+  const expWhere = buildDateWhere('e.expense_date', range);
+
+  const sales =
+    (await db.getFirstAsync<{
+      revenue: number;
+      cogs: number;
+      items_sold: number;
+    }>(
+      `
+      SELECT
+        COALESCE(SUM(CASE WHEN s.is_return = 1 THEN -(s.final_sold_price * s.quantity_sold) ELSE (s.final_sold_price * s.quantity_sold) END), 0) AS revenue,
+        COALESCE(SUM(CASE WHEN s.is_return = 1 THEN -(v.cost_price * s.quantity_sold) ELSE (v.cost_price * s.quantity_sold) END), 0) AS cogs,
+        COALESCE(SUM(CASE WHEN s.is_return = 1 THEN -s.quantity_sold ELSE s.quantity_sold END), 0) AS items_sold
+      FROM Sales s
+      INNER JOIN Variants v ON v.id = s.variant_id
+      ${salesWhere.clause};
+      `,
+      salesWhere.args,
+    )) ?? { revenue: 0, cogs: 0, items_sold: 0 };
+
+  const expenses =
+    (await db.getFirstAsync<{ expenses: number }>(
+      `
+      SELECT COALESCE(SUM(e.amount), 0) AS expenses
+      FROM Expenses e
+      ${expWhere.clause};
+      `,
+      expWhere.args,
+    )) ?? { expenses: 0 };
+
+  const revenue = Number(sales.revenue ?? 0);
+  const cogs = Number(sales.cogs ?? 0);
+  const exp = Number(expenses.expenses ?? 0);
+  const netProfit = revenue - cogs - exp;
+
+  return {
+    revenue,
+    cogs,
+    expenses: exp,
+    netProfit,
+    itemsSold: Number(sales.items_sold ?? 0),
+  };
+}
+
+export type BestSellerRow = {
+  product_id: string;
+  product_name: string;
+  quantity: number;
+};
+
+export async function listBestSellers(
+  db: SQLite.SQLiteDatabase,
+  input: {
+    range?: DateRange;
+    limit?: number;
+  },
+): Promise<BestSellerRow[]> {
+  const lim = input.limit ?? 3;
+  const where = buildDateWhere('s.sale_date', input.range);
+  const rows = await db.getAllAsync<BestSellerRow>(
+    `
+    SELECT
+      p.id AS product_id,
+      p.name AS product_name,
+      COALESCE(SUM(CASE WHEN s.is_return = 1 THEN -s.quantity_sold ELSE s.quantity_sold END), 0) AS quantity
+    FROM Sales s
+    INNER JOIN Variants v ON v.id = s.variant_id
+    INNER JOIN Products p ON p.id = v.product_id
+    ${where.clause}
+    GROUP BY p.id
+    HAVING quantity > 0
+    ORDER BY quantity DESC
+    LIMIT ?;
+    `,
+    [...where.args, lim],
+  );
+  return (rows ?? []).map((r) => ({ ...r, quantity: Number(r.quantity ?? 0) }));
+}
+
+export type LowStockRow = {
+  variant_id: string;
+  product_name: string;
+  size_label: string;
+  current_stock: number;
+};
+
+export async function listLowStockVariants(
+  db: SQLite.SQLiteDatabase,
+  input: {
+    threshold?: number;
+    limit?: number;
+  } = {},
+): Promise<LowStockRow[]> {
+  const threshold = input.threshold ?? 2;
+  const lim = input.limit ?? 20;
+  const rows = await db.getAllAsync<LowStockRow>(
+    `
+    SELECT
+      v.id AS variant_id,
+      p.name AS product_name,
+      v.size_label AS size_label,
+      v.current_stock AS current_stock
+    FROM Variants v
+    INNER JOIN Products p ON p.id = v.product_id
+    WHERE v.current_stock <= ?
+    ORDER BY v.current_stock ASC, p.name COLLATE NOCASE ASC
+    LIMIT ?;
+    `,
+    [threshold, lim],
+  );
+  return (rows ?? []).map((r) => ({ ...r, current_stock: Number(r.current_stock ?? 0) }));
+}
+
 export async function createExpense(db: SQLite.SQLiteDatabase, input: {
   amount: number;
   category: string;
