@@ -3,4 +3,6 @@ export type RootStackParamList = {
   ActionModal: undefined;
   RecordSale: undefined;
   AddExpense: undefined;
+  ProductUpsert: { productId?: string };
+  VariantsEditor: { productId: string };
 };

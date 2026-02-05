@@ -5,7 +5,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { DealersScreen } from '../screens/DealersScreen';
 import { HomeScreen } from '../screens/HomeScreen';
-import { InventoryScreen } from '../screens/InventoryScreen';
+import { ProductsListScreen } from '../screens/ProductsListScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import type { RootStackParamList } from './types';
 
@@ -42,7 +42,7 @@ export function TabsNavigator() {
       }}
     >
       <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Inventory" component={InventoryScreen} />
+      <Tab.Screen name="Inventory" component={ProductsListScreen} />
       <Tab.Screen
         name="Action"
         component={EmptyScreen}
