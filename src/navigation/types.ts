@@ -5,4 +5,6 @@ export type RootStackParamList = {
   AddExpense: undefined;
   ProductUpsert: { productId?: string };
   VariantsEditor: { productId: string };
+  SalesHistory: undefined;
+  ExpensesHistory: undefined;
 };

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { NavigationProp, useFocusEffect, useNavigation } from '@react-navigation/native';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { getDb } from '../db/database';
@@ -11,6 +12,7 @@ import {
   type DashboardTotals,
   type LowStockRow,
 } from '../db/queries';
+import type { RootStackParamList } from '../navigation/types';
 
 type FilterKey = 'today' | 'month' | 'year' | 'all';
 
@@ -54,6 +56,7 @@ function getRange(key: FilterKey): DateRange | undefined {
 }
 
 export function HomeScreen() {
+  const navigation = useNavigation<NavigationProp<RootStackParamList>>();
   const [filter, setFilter] = React.useState<FilterKey>('today');
   const [totals, setTotals] = React.useState<DashboardTotals>({
     revenue: 0,
@@ -84,8 +87,23 @@ export function HomeScreen() {
     void refresh();
   }, [refresh]);
 
+  useFocusEffect(
+    React.useCallback(() => {
+      void refresh();
+    }, [refresh]),
+  );
+
   return (
     <View style={styles.container}>
+      <View style={styles.actionsRow}>
+        <Pressable onPress={() => navigation.navigate('SalesHistory')} style={styles.actionButton}>
+          <Text style={styles.actionButtonText}>Sales History</Text>
+        </Pressable>
+        <Pressable onPress={() => navigation.navigate('ExpensesHistory')} style={styles.actionButton}>
+          <Text style={styles.actionButtonText}>Expenses History</Text>
+        </Pressable>
+      </View>
+
       <View style={styles.pillsRow}>
         <Pill label="Today" active={filter === 'today'} onPress={() => setFilter('today')} />
         <Pill label="This Month" active={filter === 'month'} onPress={() => setFilter('month')} />
@@ -176,6 +194,23 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 16,
     backgroundColor: 'white',
+  },
+  actionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 10,
+  },
+  actionButton: {
+    flex: 1,
+    backgroundColor: '#111827',
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  actionButtonText: {
+    color: 'white',
+    fontWeight: '900',
+    fontSize: 12,
   },
   pillsRow: {
     flexDirection: 'row',

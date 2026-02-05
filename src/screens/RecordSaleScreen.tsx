@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Alert, FlatList, Platform, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import { getDb } from '../db/database';
@@ -9,6 +11,7 @@ import {
   type ProductSaleRow,
   type VariantSaleRow,
 } from '../db/queries';
+import type { RootStackParamList } from '../navigation/types';
 
 function formatDate(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -28,6 +31,7 @@ function tryGetDateTimePicker(): null | {
 }
 
 export function RecordSaleScreen() {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [productSearch, setProductSearch] = React.useState('');
   const [products, setProducts] = React.useState<ProductSaleRow[]>([]);
   const [selectedProductId, setSelectedProductId] = React.useState<string | null>(null);
@@ -124,11 +128,12 @@ export function RecordSaleScreen() {
       setNotes('');
       setSelectedVariantId(null);
       await refreshVariants();
+      navigation.popToTop();
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to save';
       Alert.alert('Error', msg);
     }
-  }, [isReturn, notes, qty, refreshVariants, saleDate, selectedVariantId, soldPriceText]);
+  }, [isReturn, navigation, notes, qty, refreshVariants, saleDate, selectedVariantId, soldPriceText]);
 
   return (
     <View style={styles.container}>

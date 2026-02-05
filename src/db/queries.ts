@@ -460,6 +460,140 @@ export async function listLowStockVariants(
   return (rows ?? []).map((r) => ({ ...r, current_stock: Number(r.current_stock ?? 0) }));
 }
 
+export type SaleHistoryRow = {
+  id: string;
+  sale_date: number;
+  is_return: number;
+  final_sold_price: number;
+  quantity_sold: number;
+  product_name: string;
+  size_label: string;
+};
+
+export async function listSalesHistory(
+  db: SQLite.SQLiteDatabase,
+  input: {
+    limit?: number;
+    range?: DateRange;
+  } = {},
+): Promise<SaleHistoryRow[]> {
+  const lim = input.limit ?? 200;
+  const where = buildDateWhere('s.sale_date', input.range);
+  const rows = await db.getAllAsync<SaleHistoryRow>(
+    `
+    SELECT
+      s.id AS id,
+      s.sale_date AS sale_date,
+      s.is_return AS is_return,
+      s.final_sold_price AS final_sold_price,
+      s.quantity_sold AS quantity_sold,
+      p.name AS product_name,
+      v.size_label AS size_label
+    FROM Sales s
+    INNER JOIN Variants v ON v.id = s.variant_id
+    INNER JOIN Products p ON p.id = v.product_id
+    ${where.clause}
+    ORDER BY s.sale_date DESC
+    LIMIT ?;
+    `,
+    [...where.args, lim],
+  );
+  return (rows ?? []).map((r) => ({
+    ...r,
+    sale_date: Number(r.sale_date ?? 0),
+    is_return: Number(r.is_return ?? 0),
+    final_sold_price: Number(r.final_sold_price ?? 0),
+    quantity_sold: Number(r.quantity_sold ?? 0),
+  }));
+}
+
+export type ExpenseHistoryRow = {
+  id: string;
+  expense_date: number;
+  category: string;
+  amount: number;
+  note: string | null;
+};
+
+export async function listExpensesHistory(
+  db: SQLite.SQLiteDatabase,
+  input: {
+    limit?: number;
+    range?: DateRange;
+  } = {},
+): Promise<ExpenseHistoryRow[]> {
+  const lim = input.limit ?? 200;
+  const where = buildDateWhere('e.expense_date', input.range);
+  const rows = await db.getAllAsync<ExpenseHistoryRow>(
+    `
+    SELECT
+      e.id AS id,
+      e.expense_date AS expense_date,
+      e.category AS category,
+      e.amount AS amount,
+      e.note AS note
+    FROM Expenses e
+    ${where.clause}
+    ORDER BY e.expense_date DESC
+    LIMIT ?;
+    `,
+    [...where.args, lim],
+  );
+  return (rows ?? []).map((r) => ({
+    ...r,
+    expense_date: Number(r.expense_date ?? 0),
+    amount: Number(r.amount ?? 0),
+  }));
+}
+
+export async function deleteExpense(db: SQLite.SQLiteDatabase, expenseId: string): Promise<void> {
+  await db.runAsync('DELETE FROM Expenses WHERE id = ?;', [expenseId]);
+}
+
+export async function deleteSaleAndRollbackStock(db: SQLite.SQLiteDatabase, saleId: string): Promise<void> {
+  await db.execAsync('BEGIN;');
+  try {
+    const s = await db.getFirstAsync<{
+      variant_id: string;
+      quantity_sold: number;
+      is_return: number;
+    }>('SELECT variant_id, quantity_sold, is_return FROM Sales WHERE id = ?;', [saleId]);
+
+    if (!s) {
+      throw new Error('Sale not found');
+    }
+
+    const qty = Number(s.quantity_sold ?? 0);
+    if (!Number.isInteger(qty) || qty <= 0) {
+      throw new Error('Invalid sale quantity');
+    }
+
+    const isReturn = Number(s.is_return ?? 0) === 1;
+    const originalDelta = isReturn ? qty : -qty;
+    const rollbackDelta = -originalDelta;
+
+    const v = await db.getFirstAsync<{ current_stock: number }>('SELECT current_stock FROM Variants WHERE id = ?;', [
+      s.variant_id,
+    ]);
+    if (!v) {
+      throw new Error('Variant not found');
+    }
+
+    const nextStock = Number(v.current_stock ?? 0) + rollbackDelta;
+    if (nextStock < 0) {
+      throw new Error('Cannot delete: stock would become negative');
+    }
+
+    await db.runAsync('UPDATE Variants SET current_stock = ? WHERE id = ?;', [nextStock, s.variant_id]);
+    await db.runAsync('DELETE FROM Sales WHERE id = ?;', [saleId]);
+
+    await db.execAsync('COMMIT;');
+  } catch (e) {
+    await db.execAsync('ROLLBACK;');
+    throw e;
+  }
+}
+
 export async function createExpense(db: SQLite.SQLiteDatabase, input: {
   amount: number;
   category: string;

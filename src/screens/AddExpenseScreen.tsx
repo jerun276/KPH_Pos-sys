@@ -1,10 +1,14 @@
 import * as React from 'react';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { getDb } from '../db/database';
 import { createExpense } from '../db/queries';
+import type { RootStackParamList } from '../navigation/types';
 
 export function AddExpenseScreen() {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [amount, setAmount] = React.useState<string>('');
   const [category, setCategory] = React.useState<string>('Rent');
   const [note, setNote] = React.useState<string>('');
@@ -27,7 +31,8 @@ export function AddExpenseScreen() {
     setAmount('');
     setNote('');
     Alert.alert('Saved', 'Expense recorded locally.');
-  }, [amount, category, note]);
+    navigation.popToTop();
+  }, [amount, category, navigation, note]);
 
   return (
     <View style={styles.container}>
